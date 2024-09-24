@@ -2,7 +2,7 @@ from django.urls import path
 from rest_framework import permissions
 from drf_yasg.views import get_schema_view
 from drf_yasg import openapi
-from .views import CategoryList, CategoryDetail, WallpaperByCategory
+from .views import QueueListAPIView, BookingCreateAPIView, BookingDeleteAPIView, BookingListAPIView, BookingCancelAPIView
 
 schema_view = get_schema_view(
    openapi.Info(
@@ -35,9 +35,11 @@ schema_view = get_schema_view(
 urlpatterns = [
     path('swagger<format>/', schema_view.without_ui(cache_timeout=0), name='schema-json'),
     path('swagger/', schema_view.with_ui('swagger', cache_timeout=0), name='schema-swagger-ui'),
-    path('categories/', CategoryList.as_view(), name='category-list'),
-    path('categories/<int:pk>/wallpapers/', WallpaperByCategory.as_view(), name='wallpapers_by_category'),
-    path('wallpaper/<int:pk>/', CategoryDetail.as_view(), name='wallpaper-detail'),
+    path('bookings/', BookingCreateAPIView.as_view(), name='booking-create'),
+    path('bookings/<int:booking_id>/', BookingDeleteAPIView.as_view(), name='booking-delete'),
+    path('queue/', QueueListAPIView.as_view(), name='queue'),
+    path('api/bookings/', BookingListAPIView.as_view(), name='api-bookings-create'),
+    path('bookings/cancel/<int:pk>/', BookingCancelAPIView.as_view(), name='booking-cancel'),
 ]
 
 

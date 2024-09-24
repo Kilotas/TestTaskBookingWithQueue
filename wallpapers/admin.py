@@ -1,11 +1,12 @@
 from django.contrib import admin
-from .models import User, Category, Wallpaper, Download
+from .models import QueueEntry, Queue, Resource, Booking
 # Register your models here.
 
-admin.site.register(User)
-admin.site.register(Category)
-admin.site.register(Wallpaper)
-admin.site.register(Download)
+admin.site.register(QueueEntry)
+admin.site.register(Queue)
+admin.site.register(Resource)
+admin.site.register(Booking)
+
 
 
 

@@ -1,15 +1,29 @@
 from rest_framework import serializers
-from .models import Category, Wallpaper
 
+from rest_framework import serializers
+from .models import Booking, QueueEntry
 
-
-class WallpaperSerializer(serializers.ModelSerializer):
+class BookingSerializer(serializers.ModelSerializer):
     class Meta:
-        model = Wallpaper
-        fields = '__all__'
+        model = Booking
+        fields = ['id', 'user', 'resource', 'start_time', 'end_time', 'status']
 
-class CategorySerializer(serializers.ModelSerializer):
+    def validate(self, attrs):
+        if attrs['start_time'] >= attrs['end_time']:
+            raise serializers.ValidationError("Время начала должно быть меньше времени окончания.")
+
+        existing_bookings = Booking.objects.filter(
+            resource=attrs['resource'],
+            start_time__lt=attrs['end_time'],
+            end_time__gt=attrs['start_time']
+        )
+
+        if existing_bookings.exists():
+            raise serializers.ValidationError("Этот ресурс уже забронирован на указанное время.")
+
+        return attrs
+
+class QueueEntrySerializer(serializers.ModelSerializer):
     class Meta:
-        model = Category
-        fields = '__all__'
-
+        model = QueueEntry
+        fields = ['id', 'user', 'booking']

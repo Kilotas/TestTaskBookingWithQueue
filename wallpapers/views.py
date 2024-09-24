@@ -1,108 +1,135 @@
-from django.http import Http404
-from django.shortcuts import render
-from drf_yasg import openapi
 from drf_spectacular import openapi
-from drf_yasg.utils import swagger_auto_schema, logger
-from rest_framework import status
-from rest_framework.views import APIView
+from drf_spectacular.utils import extend_schema, OpenApiResponse
+from drf_yasg.utils import swagger_auto_schema
+from rest_framework import status, generics
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from .models import Category, Wallpaper
-from .serializers import CategorySerializer, WallpaperSerializer
-from rest_framework.permissions import IsAdminUser
-from rest_framework.decorators import permission_classes
+from rest_framework.views import APIView
+from .models import Booking, QueueEntry
+from .utils import is_slot_available, add_to_queue, release_slot
+from .serializers import BookingSerializer, QueueEntrySerializer
 
-#2
-# Create your views here.
-class CategoryList(APIView):
+
+class BookingCreateAPIView(generics.CreateAPIView):
+    serializer_class = BookingSerializer
+
+    @extend_schema(
+        request=BookingSerializer,
+        responses={
+            201: {
+                'description': 'Booking created successfully',
+                'schema': BookingSerializer,
+            },
+            400: {
+                'description': 'Invalid data or slot unavailable',
+            },
+        },
+        summary='Create a booking',
+        description='Create a new booking for a resource. If no slots are available, add the user to the queue.'
+    )
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        resource = serializer.validated_data['resource']
+        start_time = serializer.validated_data['start_time']
+
+        # Check slot availability
+        if not is_slot_available(resource, start_time):  # Adjust this function as necessary
+            add_to_queue(request.user, resource)
+            return Response(
+                {"detail": "Все слоты заняты. Вы добавлены в очередь."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Save the booking
+        booking = serializer.save(user=request.user)
+        return Response(self.get_serializer(booking).data, status=status.HTTP_201_CREATED)
+
+
+class BookingDeleteAPIView(generics.DestroyAPIView):
+    queryset = Booking.objects.all()
+    serializer_class = BookingSerializer
+    lookup_field = 'id'  # Assuming 'id' is the primary key field
 
     @swagger_auto_schema(
-        tags=['Categories'],
-        operation_description="Endpoint for retrieving a list of categories or creating a new category.",
         responses={
-            200: "Successful retrieval. Returns a list of categories.",
-            201: "Successful creation. Returns the created category.",
-            400: "Bad request. Invalid input.",
-            500: "Internal server error. Failed to process the request."
-        }
+            204: 'Booking deleted successfully',
+            404: 'Booking not found',
+        },
+        summary='Delete a booking',
+        description='Delete a booking by its ID and release the associated slot.'
     )
-    def get(self, request):
-        categories = Category.objects.all()
-        serializer = CategorySerializer(categories, many=True)
-        return Response(serializer.data)
 
-    def post(self, request):
-        serializer = CategorySerializer(data=request.data)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    def perform_destroy(self, instance):
+        release_slot(instance)
+        instance.delete()
 
+class BookingListAPIView(generics.ListAPIView):
+    """
+      API endpoint that allows users to view all their bookings.
+      """
+    queryset = Booking.objects.all()
+    serializer_class = BookingSerializer
 
-#3
-class CategoryDetail(APIView):
-
-    @swagger_auto_schema(
-        tags=['Wallpapers'],
-        operation_description="Endpoint for retrieving detailed information about a specific wallpaper.",
+    @extend_schema(
+        operation_id="list_bookings",
         responses={
-            200: WallpaperSerializer,
-            404: "Not found. The specified wallpaper does not exist.",
-            500: "Internal server error. Failed to process the request."
-        }
+            200: BookingSerializer(many=True),
+        },
+        description="Retrieve a list of all bookings, including active and queued.",
     )
-    def get(self, request, pk, *args, **kwargs):
-        try:
-            wallpaper = Wallpaper.objects.get(pk=pk)
-            # Сериализация объекта обоев
-            serializer = WallpaperSerializer(wallpaper)
-            return Response(serializer.data, status=status.HTTP_200_OK)
-        except Wallpaper.DoesNotExist:
-            return Response({"detail": "Wallpaper not found."}, status=status.HTTP_404_NOT_FOUND)
-        except Exception as e:
-            return Response({"detail": "An error occurred. Please try again later."},
-                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    def get(self, request, *args, **kwargs):
+        """
+        Retrieve all bookings.
+        """
+        return super().get(request, *args, **kwargs)
 
+class QueueListAPIView(generics.ListAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = QueueEntrySerializer
 
-
-# 1
-class WallpaperByCategory(APIView):
-
-    @swagger_auto_schema(
-        tags=['Wallpapers'],
-        operation_description="Получаешь лист объектов по конкретным категориям, например 1 у нас это аниме",
-        responses={
-            200: WallpaperSerializer(many=True),
-            400: "Bad request. Invalid input.",
-            404: "Not found. The specified category does not exist.",
-            500: "Internal server error. Failed to process the request."
-        }
+    @extend_schema(
+        responses=QueueEntrySerializer,
+        summary='Get user queue entries',
+        description='Retrieve the queue entries for the authenticated user.'
     )
-    def get(self, request, pk):
-        try:
-            logger.info(f"Retrieving category with ID {pk}")
-            category = Category.objects.get(id=pk)
-            logger.info(f"Category retrieved: {category}")
-
-            wallpapers = category.wallpapers.all()
-            logger.info(f"Retrieved {wallpapers.count()} wallpapers for category ID {pk}")
-
-            serializer = WallpaperSerializer(wallpapers, many=True)
-            logger.info("Serialization complete")
-
-            return Response(serializer.data, status=status.HTTP_200_OK)
-        except Category.DoesNotExist:
-            logger.error(f"Category with ID {pk} does not exist.")
-            return Response({"detail": "Category not found."}, status=status.HTTP_404_NOT_FOUND)
-        except Exception as e:
-            logger.exception(f"An error occurred while retrieving wallpapers for category {pk}: {e}")
-            return Response({"detail": "An error occurred. Please try again later."},
-                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    def get_queryset(self):
+        # Возвращаем только записи очереди для текущего пользователя
+        return QueueEntry.objects.filter(user=self.request.user, booking__isnull=True).order_by('created_at')
 
 
+class BookingCancelAPIView(generics.DestroyAPIView):
+    queryset = Booking.objects.all()
+    permission_classes = [IsAuthenticated]
 
+    def destroy(self, request, *args, **kwargs):
+        booking = self.get_object()
 
+        # Отменяем бронирование
+        booking.status = 'completed'
+        booking.save()
 
+        # Проверяем, есть ли пользователи в очереди
+        next_queue_entry = QueueEntry.objects.filter(booking__isnull=True).order_by('created_at').first()
+        if next_queue_entry:
 
+            new_booking = Booking.objects.create(
+                user=next_queue_entry.user,
+                resource=booking.resource,
+                start_time=booking.start_time,
+                end_time=booking.end_time,
+                status='active'  # или другое значение для активного бронирования
+            )
+            # Удаляем запись из очереди
+            next_queue_entry.booking = new_booking
+            next_queue_entry.save()
+
+            # Уведомляем следующего пользователя (здесь можно использовать сигнал или просто вывести сообщение)
+            print(f"Уведомление: {next_queue_entry.user.username}, ваш слот был активирован!")
+
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 
